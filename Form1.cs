@@ -1,10 +1,11 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Media;
 using System.Net.NetworkInformation;
 using System.Timers;
 using System.Windows.Forms;
+using WMPLib;
 
 namespace UptimeCheck
 {
@@ -17,6 +18,8 @@ namespace UptimeCheck
         private System.Windows.Forms.NotifyIcon notifyIcon;
         private System.Windows.Forms.ContextMenuStrip contextMenuStrip;
         private System.Windows.Forms.ToolStripMenuItem exitToolStripMenuItem;
+        private bool connected = false;
+        private DateTime disconnectTime;
 
         private string logFilePath = "PingLog.txt";
 
@@ -94,7 +97,7 @@ namespace UptimeCheck
 
         private void InitializePingMonitor()
         {
-            pingTimer = new System.Timers.Timer(25000); // 25 seconds
+            pingTimer = new System.Timers.Timer(15000); // 15 seconds
             pingTimer.Elapsed += PingTimer_Elapsed;
             pingTimer.AutoReset = true;
             pingTimer.Enabled = true;
@@ -105,7 +108,7 @@ namespace UptimeCheck
 
         private void PingTimer_Elapsed(object sender, ElapsedEventArgs e)
         {
-            string host = "google.com";
+            string host = "1.1.1.1";
             Ping ping = new Ping();
             PingReply reply = null;
 
@@ -115,48 +118,62 @@ namespace UptimeCheck
             }
             catch (PingException ex)
             {
-                string errorMessage = $"Ping failed: {ex.Message}";
-                SystemSounds.Beep.Play();
-                SetPanelColor(Color.Red);
-                PlayAlertSound();
-                LogEvent(errorMessage);
+                HandlePingFailure($"Ping failed: {ex.Message}");
                 return; // Exit the method early since the ping failed.
             }
             catch (Exception ex)
             {
-                string errorMessage = $"An unexpected error occurred: {ex.Message}";
-                UpdateLabelText(errorMessage);
-                SetPanelColor(Color.Red);
-                PlayAlertSound();
-                LogEvent(errorMessage);
+                HandlePingFailure($"An unexpected error occurred: {ex.Message}");
                 return; // Exit the method early since the ping failed.
             }
 
             if (reply != null && reply.Status == IPStatus.Success)
             {
-                string result = $"Ping to {host}: {reply.RoundtripTime}ms";
-                UpdateLabelText(result);
-                LogEvent(result);
-
-                if (reply.RoundtripTime < 400)
-                {
-                    SetPanelColor(Color.Green);
-                }
-                else
-                {
-                    SetPanelColor(Color.Red);
-                    PlayAlertSound();
-                    LogEvent($"Ping exceeded 400ms: {reply.RoundtripTime}ms");
-                }
+                HandlePingSuccess(reply.RoundtripTime);
             }
             else
             {
-                string result = $"Ping to {host} failed.";
-                UpdateLabelText(result);
-                SetPanelColor(Color.Red);
-                PlayAlertSound();
-                LogEvent(result);
+                HandlePingFailure($"Ping to {host} failed.");
             }
+        }
+
+        private void HandlePingSuccess(long roundtripTime)
+        {
+            string result = $"Ping to 1.1.1.1: {roundtripTime}ms";
+            UpdateLabelText(result);
+
+            if (!connected)
+            {
+                connected = true;
+                PlayConnectAlertSound();
+                TimeSpan disconnectDuration = DateTime.Now - disconnectTime;
+                LogEvent($"Successfully reconnected: {disconnectDuration.TotalSeconds} seconds");
+            }
+
+            if (roundtripTime < 400)
+            {
+                SetPanelColor(Color.Green);
+            }
+            else
+            {
+                SetPanelColor(Color.Red);
+                PlayDisconnectAlertSound();
+                LogEvent($"Ping exceeded 400ms: {roundtripTime}ms");
+            }
+        }
+
+        private void HandlePingFailure(string message)
+        {
+            if (connected)
+            {
+                connected = false;
+                disconnectTime = DateTime.Now;
+                PlayDisconnectAlertSound();
+                LogEvent(message);
+            }
+
+            UpdateLabelText(message);
+            SetPanelColor(Color.Red);
         }
 
         private void UpdateLabelText(string text)
@@ -183,11 +200,61 @@ namespace UptimeCheck
             }
         }
 
-        private void PlayAlertSound()
+        private void PlayDisconnectAlertSound()
         {
-            SystemSounds.Beep.Play();
+            try
+            {
+                // Specify the path to your custom .mp3 file
+                string disconnectFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "connectionlost.wav");
+                // Ensure the file exists before trying to play it
+                if (File.Exists(disconnectFilePath))
+                {
+                    WindowsMediaPlayer player = new WindowsMediaPlayer();
+                    player.URL = disconnectFilePath;
+                    player.controls.play();
+                }
+                else
+                {
+                    // Fallback to a generic beep or handle the missing file scenario
+                    SystemSounds.Beep.Play();
+                    LogEvent("Custom disconnect sound file not found. Default played.");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogEvent($"Error playing disconnect sound: {ex.Message}");
+            // Fallback to a generic beep if custom sound playback fails
+            //    SystemSounds.Beep.Play();
+            }
         }
 
+        private void PlayConnectAlertSound()
+        {
+            try
+            {
+                // Specify the path to your custom .mp3 file
+                string connectFilePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "connected.wav");
+                // Ensure the file exists before trying to play it
+                if (File.Exists(connectFilePath))
+                {
+                    WindowsMediaPlayer player = new WindowsMediaPlayer();
+                    player.URL = connectFilePath;
+                    player.controls.play();
+                }
+                else
+                {
+                    // Fallback to a generic beep or handle the missing file scenario
+                    SystemSounds.Beep.Play();
+                    LogEvent("Custom connect sound file not found. Default played.");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogEvent($"Error playing connect sound: {ex.Message}");
+                // Fallback to a generic beep if custom sound playback fails
+                //    SystemSounds.Beep.Play();
+            }
+        }
         private void LogEvent(string message)
         {
             string logMessage = $"{DateTime.Now}: {message}";
